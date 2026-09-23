@@ -216,3 +216,21 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Virtual environment (in case the Python template didn't already catch this)
+venv/
+.venv/
+
+# Jupyter checkpoint files — auto-generated junk, not real content
+.ipynb_checkpoints/
+
+# Data — don't commit actual data files, just the folder structure
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# OS / editor junk
+.DS_Store
+.vscode/
+.idea/
