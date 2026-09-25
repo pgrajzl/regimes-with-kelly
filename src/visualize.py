@@ -11,7 +11,12 @@ import ipywidgets as widgets
 from IPython.display import display
 import numpy as np
 
-from src.miscellaneous_calc import calculate_beta
+from src.miscellaneous_calc import (
+    calculate_beta,
+    calculate_rolling_beta,
+    calculate_rolling_excess_return,
+    calculate_correlation,
+)
 
 # Global plot styling — applied once at import time so every plotting
 # function in this module inherits it automatically, rather than needing
@@ -202,3 +207,144 @@ def _positional_axis_with_dates(ax, index, n_ticks: int = 8, date_fmt: str = "%m
     tick_labels = [index[i].strftime(date_fmt) for i in tick_positions]
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, rotation=0, ha="center")
+
+
+def plot_rolling_beta(ticker_name: str, ticker_daily: pd.Series, spy_daily: pd.Series):
+    """
+    Interactive rolling beta plot — a dropdown selects the rolling window
+    (3mo/6mo/12mo), plotted over the full available daily history for the
+    ticker (up to ~10yr, whatever's actually available).
+
+    Always uses daily data — rolling beta on hourly data would be a much
+    noisier, less standard measure, and isn't what this function is for.
+    """
+
+    def _render(window: str):
+        rolling_beta = calculate_rolling_beta(ticker_daily, spy_daily, window=window)
+        rolling_beta = rolling_beta.dropna()
+
+        if rolling_beta.empty:
+            print(f"Not enough history to compute a {window} rolling beta for {ticker_name}.")
+            return
+
+        x = np.arange(len(rolling_beta))
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.plot(x, rolling_beta.values, color="tab:purple", label=f"{window} rolling beta")
+        ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, alpha=0.6, label="Beta = 1")
+        ax.set_ylabel("Beta")
+        ax.legend(loc="upper left")
+
+        _positional_axis_with_dates(ax, rolling_beta.index)
+
+        ax.set_title(f"{ticker_name} — {window} rolling beta vs. SPY")
+        fig.tight_layout()
+        plt.show()
+
+    window_dropdown = widgets.Dropdown(
+        options=["3mo", "6mo", "12mo"], value="12mo", description="Window:"
+    )
+
+    out = widgets.interactive_output(_render, {"window": window_dropdown})
+    display(window_dropdown, out)
+
+def plot_rolling_excess_return(ticker_name: str, ticker_daily: pd.Series, spy_daily: pd.Series):
+    """
+    Interactive rolling excess return plot vs. SPY — a dropdown selects
+    the rolling window (3mo/6mo/12mo), plotted over the full available
+    daily history for the ticker.
+
+    Always uses daily data, same reasoning as plot_rolling_beta — this is
+    a longer-horizon concept, not something intraday granularity adds
+    value to.
+    """
+
+    def _render(window: str):
+        excess_return = calculate_rolling_excess_return(ticker_daily, spy_daily, window=window)
+        excess_return = excess_return.dropna()
+
+        if excess_return.empty:
+            print(f"Not enough history to compute a {window} rolling excess return for {ticker_name}.")
+            return
+
+        x = np.arange(len(excess_return))
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+        # Color the fill green where excess return is positive (beating
+        # SPY) and red where negative (lagging SPY) — makes the sign
+        # visually obvious at a glance rather than requiring the reader
+        # to check the y-axis scale each time.
+        ax.plot(x, excess_return.values * 100, color="black", linewidth=1)
+        ax.fill_between(
+            x, excess_return.values * 100, 0,
+            where=(excess_return.values >= 0), color="tab:green", alpha=0.3, interpolate=True,
+        )
+        ax.fill_between(
+            x, excess_return.values * 100, 0,
+            where=(excess_return.values < 0), color="tab:red", alpha=0.3, interpolate=True,
+        )
+        ax.axhline(0, color="gray", linestyle="--", linewidth=1, alpha=0.6)
+        ax.set_ylabel("Excess return vs. SPY (%)")
+
+        _positional_axis_with_dates(ax, excess_return.index)
+
+        ax.set_title(f"{ticker_name} — {window} rolling excess return vs. SPY")
+        fig.tight_layout()
+        plt.show()
+
+    window_dropdown = widgets.Dropdown(
+        options=["3mo", "6mo", "12mo"], value="12mo", description="Window:"
+    )
+
+    out = widgets.interactive_output(_render, {"window": window_dropdown})
+    display(window_dropdown, out)
+
+def plot_beta_vs_excess_return(ticker_name: str, ticker_daily: pd.Series, spy_daily: pd.Series):
+    """
+    Rolling beta and rolling excess return plotted together over time, for
+    a given rolling window — same x-axis, beta on the left y-axis and
+    excess return on the right, so you can see how the two move relative
+    to each other (e.g. does beta spike precede a stretch of
+    underperformance, or the opposite?).
+    """
+
+    def _render(window: str):
+        beta = calculate_rolling_beta(ticker_daily, spy_daily, window=window)
+        excess_return = calculate_rolling_excess_return(ticker_daily, spy_daily, window=window)
+
+        combined = pd.concat([beta, excess_return], axis=1, join="inner").dropna()
+        combined.columns = ["beta", "excess_return"]
+
+        if combined.empty:
+            print(f"Not enough history to compute {window} beta/excess return for {ticker_name}.")
+            return
+
+        x = np.arange(len(combined))
+
+        fig, ax1 = plt.subplots(figsize=(12, 5))
+
+        ax1.plot(x, combined["beta"].values, color="tab:purple", label="Rolling beta")
+        ax1.axhline(1.0, color="tab:purple", linestyle="--", linewidth=1, alpha=0.4)
+        ax1.set_ylabel("Rolling beta", color="tab:purple")
+        ax1.tick_params(axis="y", labelcolor="tab:purple")
+
+        ax2 = ax1.twinx()
+        ax2.plot(x, combined["excess_return"].values * 100, color="tab:green", label="Rolling excess return", alpha=0.8)
+        ax2.axhline(0, color="tab:green", linestyle="--", linewidth=1, alpha=0.4)
+        ax2.set_ylabel("Rolling excess return vs. SPY (%)", color="tab:green")
+        ax2.tick_params(axis="y", labelcolor="tab:green")
+
+        _positional_axis_with_dates(ax1, combined.index)
+
+        corr = calculate_correlation(combined["beta"], combined["excess_return"])
+
+        ax1.set_title(f"{ticker_name} — {window} rolling beta vs. excess return (corr = {corr:.2f})")
+        fig.tight_layout()
+        plt.show()
+
+    window_dropdown = widgets.Dropdown(
+        options=["3mo", "6mo", "12mo"], value="12mo", description="Window:"
+    )
+
+    out = widgets.interactive_output(_render, {"window": window_dropdown})
+    display(window_dropdown, out)

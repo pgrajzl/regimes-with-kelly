@@ -209,7 +209,7 @@ def fetch_spy_data(
     pd.Series
         Adjusted close, indexed by date, named 'SPY'.
     """
-    cache_path = RAW_DATA_DIR / "spy_prices.parquet"
+    cache_path = RAW_DATA_DIR / "ticker_SPY.parquet"
 
     if cache and cache_path.exists():
         return pd.read_parquet(cache_path)["SPY"]
